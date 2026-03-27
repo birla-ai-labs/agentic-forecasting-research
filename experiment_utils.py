@@ -658,6 +658,105 @@ def plot_heatmap(
     return fig, ax
 
 
+# ---------------------------------------------------------------------------
+# Real data helpers (Notebook 3)
+# ---------------------------------------------------------------------------
+
+GENERIC_FACTUAL = "The series shows typical fluctuations in value levels."
+"""A deliberately vague factual description.
+
+NB1 showed that rich data-specific factual text causes w ≈ 0.91 (high Chronos
+trust), while generic text lowers w to ≈ 0.79, opening the text channel.
+Use this constant to maximize text influence in experiments.
+"""
+
+
+def load_financial_data(
+    ticker: str,
+    period: str = "2y",
+    interval: str = "1wk",
+) -> tuple:
+    """Download weekly close prices via yfinance.
+
+    Args:
+        ticker: Yahoo Finance ticker (e.g. "^GSPC", "GLD", "BTC-USD").
+        period: Lookback period (e.g. "2y", "1y").
+        interval: Bar interval (e.g. "1wk", "1d").
+
+    Returns:
+        (values, dates) where values is a 1-D float32 array and dates is a
+        list of "YYYY-MM-DD" strings.
+    """
+    import yfinance as yf
+    df = yf.download(ticker, period=period, interval=interval, progress=False)
+    if df.empty:
+        raise ValueError(f"No data returned for ticker '{ticker}'")
+    close = df["Close"]
+    if hasattr(close, "columns"):
+        close = close.iloc[:, 0]
+    values = close.dropna().values.astype(np.float32)
+    dates = close.dropna().index.strftime("%Y-%m-%d").tolist()
+    return values, dates
+
+
+def load_cement_skus(
+    csv_path: str = "data/master_12Mar26_top20_skus_apr2025_onwards_weekly.csv",
+    n_skus: int = 3,
+) -> pd.DataFrame:
+    """Load cement SKUs sorted by CV (high → low volatility).
+
+    Args:
+        csv_path: Path to the cement CSV file.
+        n_skus: Number of SKUs to return (picks high, mid, low CV).
+
+    Returns:
+        DataFrame with the selected SKU rows (all columns preserved),
+        with an added 'cv' column.
+    """
+    df = pd.read_csv(csv_path)
+    df["date"] = pd.to_datetime(df["date"])
+
+    stats = (
+        df.groupby(["sku", "SKU Name"])["qty"]
+        .agg(["mean", "std"])
+        .assign(cv=lambda x: x["std"] / x["mean"])
+        .sort_values("cv", ascending=False)
+        .reset_index()
+    )
+
+    n_total = len(stats)
+    if n_skus >= n_total:
+        indices = list(range(n_total))
+    else:
+        # Pick evenly spaced: highest CV, middle, lowest CV
+        indices = [int(i * (n_total - 1) / (n_skus - 1)) for i in range(n_skus)]
+
+    selected_skus = stats.iloc[indices]["sku"].tolist()
+    result = df[df["sku"].isin(selected_skus)].copy()
+    sku_cv = dict(zip(stats["sku"], stats["cv"]))
+    result["cv"] = result["sku"].map(sku_cv)
+    return result, stats
+
+
+def directional_accuracy(forecast: np.ndarray, ground_truth: np.ndarray) -> float:
+    """Fraction of steps where forecast and ground truth move in the same direction.
+
+    Uses step-to-step differences starting from the first value.
+
+    Args:
+        forecast: 1-D array of forecast values.
+        ground_truth: 1-D array of actual values (same length).
+
+    Returns:
+        Float in [0, 1]. 1.0 = perfect directional agreement.
+    """
+    fc_dir = np.sign(np.diff(forecast))
+    gt_dir = np.sign(np.diff(ground_truth))
+    if len(fc_dir) == 0:
+        return 0.0
+    return float(np.mean(fc_dir == gt_dir))
+
+
 def decompose_forecast(results: Dict[str, Any], pred_len: int = 8) -> pd.DataFrame:
     """Decompose the final forecast into its Chronos and fusion-head components.
 
