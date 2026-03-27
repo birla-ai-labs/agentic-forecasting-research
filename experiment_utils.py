@@ -604,6 +604,9 @@ def describe_series(values: np.ndarray) -> str:
 def build_summary(factual: str, predictive: str) -> str:
     """Build a properly formatted Migas summary string.
 
+    Uses the ``**FACTUAL SUMMARY:**`` / ``**PREDICTIVE SIGNALS:**`` headers
+    that the model was trained on (see ``synthefy-migas/notebooks/data/``).
+
     Args:
         factual: Content for the FACTUAL SUMMARY section.
         predictive: Content for the PREDICTIVE SIGNALS section.
@@ -611,7 +614,10 @@ def build_summary(factual: str, predictive: str) -> str:
     Returns:
         Formatted string with both sections.
     """
-    return f"FACTUAL SUMMARY:\n{factual}\n\nPREDICTIVE SIGNALS:\n{predictive}"
+    return (
+        f"**FACTUAL SUMMARY:**\n{factual}\n\n"
+        f"**PREDICTIVE SIGNALS:**\n{predictive}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +675,55 @@ NB1 showed that rich data-specific factual text causes w ≈ 0.91 (high Chronos
 trust), while generic text lowers w to ≈ 0.79, opening the text channel.
 Use this constant to maximize text influence in experiments.
 """
+
+
+def make_series_df(
+    values: np.ndarray,
+    dates: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """Build a DataFrame in the format expected by predict_from_dataframe.
+
+    Args:
+        values: 1-D array of time series values.
+        dates: Optional list of date strings. If None, uses integer indices.
+
+    Returns:
+        DataFrame with columns t, y_t, text.
+    """
+    n = len(values)
+    if dates is None:
+        dates = [str(i) for i in range(n)]
+    return pd.DataFrame({"t": dates[:n], "y_t": values.astype(np.float32), "text": ""})
+
+
+def run_forecast(
+    pipeline,
+    values: np.ndarray,
+    summary: str,
+    pred_len: int = 8,
+    dates: Optional[List[str]] = None,
+) -> Dict[str, np.ndarray]:
+    """Run Migas + Chronos2 forecast using the official pipeline API.
+
+    Uses predict_from_dataframe with return_univariate=True so both
+    the text-conditioned (Migas) and univariate (Chronos2) forecasts
+    share the exact same normalization path.
+
+    Args:
+        pipeline: Loaded MigasPipeline.
+        values: 1-D context array.
+        summary: FACTUAL SUMMARY + PREDICTIVE SIGNALS text.
+        pred_len: Forecast horizon.
+        dates: Optional date strings for the context.
+
+    Returns:
+        Dict with 'migas_fc' and 'chronos_fc', both shape (pred_len,).
+    """
+    df = make_series_df(values, dates)
+    migas_fc, chronos_fc = pipeline.predict_from_dataframe(
+        df, pred_len=pred_len, summaries=[summary], return_univariate=True,
+    )
+    return {"migas_fc": migas_fc, "chronos_fc": chronos_fc}
 
 
 def load_financial_data(
